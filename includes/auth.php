@@ -5,8 +5,22 @@
  */
 
 if (session_status() === PHP_SESSION_NONE) {
+    // Harden session cookies
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'domain' => '',
+        'secure' => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on',
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
     session_start();
 }
+
+// Basic security headers (safe for the API endpoint too)
+header('X-Frame-Options: SAMEORIGIN');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/constants.php';
@@ -41,6 +55,18 @@ function requireLogin() {
         header("Location: " . BASE_URL . "login.php?error=login_required");
         exit();
     }
+
+    // Enforce session timeout
+    if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) > SESSION_TIMEOUT) {
+        $redirectUrl = $_SERVER['REQUEST_URI'];
+        logoutUser();
+        // Start a fresh session to carry the redirect target
+        session_start();
+        $_SESSION['redirect_url'] = $redirectUrl;
+        header("Location: " . BASE_URL . "login.php?error=session_expired");
+        exit();
+    }
+    $_SESSION['last_activity'] = time();
 }
 
 /**

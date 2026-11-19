@@ -11,30 +11,70 @@ $db = $database->getConnection();
 
 // Handle project creation
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    // All POST actions require a valid CSRF token
+    if (!verifyCsrfToken()) {
+        redirect('projects.php', 'error', 'Invalid or expired form submission. Please try again.');
+    }
+
     if ($_POST['action'] === 'create' && hasAnyRole(['Administrator', 'Project Manager'])) {
-        $query = "INSERT INTO projects (title, description, start_date, end_date, manager_id, status) 
-                  VALUES (:title, :description, :start_date, :end_date, :manager_id, :status)";
-        $stmt = $db->prepare($query);
-        $stmt->execute([
-            ':title' => $_POST['title'],
-            ':description' => $_POST['description'],
-            ':start_date' => $_POST['start_date'],
-            ':end_date' => $_POST['end_date'],
-            ':manager_id' => $_SESSION['user_id'],
-            ':status' => $_POST['status']
-        ]);
-        
+        $title = trim($_POST['title'] ?? '');
+        $description = trim($_POST['description'] ?? '');
+        $startDate = $_POST['start_date'] ?? '';
+        $endDate = $_POST['end_date'] ?? '';
+        $status = $_POST['status'] ?? '';
+        $managerId = (int)($_POST['manager_id'] ?? 0);
+
+        if (empty($title) || empty($startDate) || empty($endDate) || !$managerId) {
+            redirect('projects.php', 'error', 'Please fill in all required fields.');
+        }
+
+        if (strtotime($endDate) < strtotime($startDate)) {
+            redirect('projects.php', 'error', 'End date cannot be before the start date.');
+        }
+
+        $validStatuses = [PROJECT_PLANNING, PROJECT_ACTIVE, PROJECT_ON_HOLD, PROJECT_COMPLETED, PROJECT_CANCELLED];
+        if (!in_array($status, $validStatuses, true)) {
+            redirect('projects.php', 'error', 'Invalid status selected.');
+        }
+
+        // Verify the manager exists
+        $managerCheck = $db->prepare("SELECT user_id FROM users WHERE user_id = :manager_id AND is_active = 1");
+        $managerCheck->execute([':manager_id' => $managerId]);
+        if (!$managerCheck->fetch()) {
+            redirect('projects.php', 'error', 'Invalid manager selected.');
+        }
+
+        try {
+            $query = "INSERT INTO projects (title, description, start_date, end_date, manager_id, status)
+                      VALUES (:title, :description, :start_date, :end_date, :manager_id, :status)";
+            $stmt = $db->prepare($query);
+            $stmt->execute([
+                ':title' => $title,
+                ':description' => $description,
+                ':start_date' => $startDate,
+                ':end_date' => $endDate,
+                ':manager_id' => $managerId,
+                ':status' => $status
+            ]);
+        } catch (PDOException $e) {
+            error_log("Project creation error: " . $e->getMessage());
+            redirect('projects.php', 'error', 'Failed to create project. Please try again.');
+        }
+
         $projectId = $db->lastInsertId();
-        logActivity($_SESSION['user_id'], 'created_project', 'project', $projectId, null, $_POST['title']);
-        
+        logActivity($_SESSION['user_id'], 'created_project', 'project', $projectId, null, $title);
+
         redirect('projects.php', 'success', 'Project created successfully!');
     }
-    
+
     if ($_POST['action'] === 'delete' && hasAnyRole(['Administrator', 'Project Manager'])) {
+        $projectId = (int)($_POST['project_id'] ?? 0);
+
         $query = "DELETE FROM projects WHERE project_id = :project_id";
         $stmt = $db->prepare($query);
-        $stmt->execute([':project_id' => $_POST['project_id']]);
-        
+        $stmt->execute([':project_id' => $projectId]);
+
+        logActivity($_SESSION['user_id'], 'deleted_project', 'project', $projectId);
         redirect('projects.php', 'success', 'Project deleted successfully!');
     }
 }
@@ -48,8 +88,15 @@ $stmt = $db->prepare($query);
 $stmt->execute();
 $projects = $stmt->fetchAll();
 
-// Get managers for dropdown
-$managers = getUsersByRole('Project Manager');
+// Get possible managers for the dropdown (Administrators and Project Managers)
+$managersQuery = "SELECT u.user_id, u.full_name, r.role_name
+                  FROM users u
+                  JOIN roles r ON u.role_id = r.role_id
+                  WHERE r.role_name IN ('Administrator', 'Project Manager') AND u.is_active = 1
+                  ORDER BY u.full_name";
+$managersStmt = $db->prepare($managersQuery);
+$managersStmt->execute();
+$managers = $managersStmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -59,6 +106,7 @@ $managers = getUsersByRole('Project Manager');
     <title>Projects - <?php echo APP_NAME; ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="assets/css/style.css" rel="stylesheet">
 </head>
 <body>
     <?php include 'includes/navbar.php'; ?>
@@ -94,7 +142,7 @@ $managers = getUsersByRole('Project Manager');
                                 <?php echo getStatusBadge($project['status']); ?>
                             </div>
                             <p class="card-text text-muted small">
-                                <?php echo escape(substr($project['description'], 0, 100)) . (strlen($project['description']) > 100 ? '...' : ''); ?>
+                                <?php echo escape(substr($project['description'] ?? '', 0, 100)) . (strlen($project['description'] ?? '') > 100 ? '...' : ''); ?>
                             </p>
                             
                             <div class="mb-3">
@@ -140,6 +188,7 @@ $managers = getUsersByRole('Project Manager');
         <div class="modal-dialog">
             <div class="modal-content">
                 <form method="POST">
+                    <?php echo csrfField(); ?>
                     <input type="hidden" name="action" value="create">
                     <div class="modal-header">
                         <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Create New Project</h5>
@@ -165,6 +214,17 @@ $managers = getUsersByRole('Project Manager');
                             </div>
                         </div>
                         <div class="mb-3">
+                            <label class="form-label">Project Manager *</label>
+                            <select class="form-select" name="manager_id" required>
+                                <?php foreach ($managers as $manager): ?>
+                                <option value="<?php echo $manager['user_id']; ?>"
+                                        <?php echo $manager['user_id'] == $_SESSION['user_id'] ? 'selected' : ''; ?>>
+                                    <?php echo escape($manager['full_name']); ?> (<?php echo escape($manager['role_name']); ?>)
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="mb-3">
                             <label class="form-label">Status</label>
                             <select class="form-select" name="status">
                                 <option value="Planning">Planning</option>
@@ -184,6 +244,7 @@ $managers = getUsersByRole('Project Manager');
     
     <!-- Delete Form (hidden) -->
     <form id="deleteForm" method="POST" style="display: none;">
+        <?php echo csrfField(); ?>
         <input type="hidden" name="action" value="delete">
         <input type="hidden" name="project_id" id="deleteProjectId">
     </form>

@@ -58,7 +58,8 @@ if ($role === 'Administrator' || $role === 'Project Manager') {
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed,
                     SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END) as in_progress
-                  FROM tasks WHERE assigned_to = :user_id";
+                  FROM tasks
+                  WHERE assigned_to = :user_id AND assignment_status != 'Rejected'";
     $taskStmt = $db->prepare($taskQuery);
     $taskStmt->bindParam(':user_id', $user_id);
     $taskStmt->execute();
@@ -66,7 +67,8 @@ if ($role === 'Administrator' || $role === 'Project Manager') {
     
     // My overdue tasks
     $overdueQuery = "SELECT COUNT(*) as total FROM tasks 
-                     WHERE assigned_to = :user_id AND status != 'Completed' AND due_date < CURDATE()";
+                     WHERE assigned_to = :user_id AND status != 'Completed'
+                     AND assignment_status != 'Rejected' AND due_date < CURDATE()";
     $overdueStmt = $db->prepare($overdueQuery);
     $overdueStmt->bindParam(':user_id', $user_id);
     $overdueStmt->execute();
@@ -86,7 +88,7 @@ $deadlineQuery = "SELECT t.*, p.title as project_title, u.full_name as assignee_
                   AND t.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)";
 
 if ($role === 'Team Member') {
-    $deadlineQuery .= " AND t.assigned_to = :user_id";
+    $deadlineQuery .= " AND t.assigned_to = :user_id AND t.assignment_status != 'Rejected'";
 }
 
 $deadlineQuery .= " ORDER BY t.due_date ASC LIMIT 5";

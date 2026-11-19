@@ -8,11 +8,13 @@ A full-featured project management system for **Nairobi Innovators Hub**, built 
 - **Dashboard** — Statistics, recent projects, upcoming deadlines, activity feed
 - **Project management** — Create, edit, delete projects with progress tracking
 - **Task management** — Assign tasks, set priorities, update status, filter & search
+- **Assignment responses** — Assignees can accept, flag as pending, or reject a task, with workload visibility, manager notifications, and reassignment
 - **Milestones** — Track project milestones with due dates
 - **Notifications** — In-app notifications for assignments, deadlines, and updates
 - **Reports & Analytics** — Charts, top performers, project progress (Chart.js)
 - **Activity logs** — Full audit trail of user actions
 - **Automated deadline checker** — Cron job script for overdue tasks and milestone alerts
+- **Security** — CSRF protection on all forms, session timeout enforcement, hardened session cookies, prepared statements throughout
 
 ## Tech Stack
 
@@ -59,6 +61,16 @@ A full-featured project management system for **Nairobi Innovators Hub**, built 
 6. **Run the app**
    - Open browser: `http://localhost/task-tracking-system/`
 
+### Upgrading an existing database
+
+If you already imported an older `schema.sql`, apply the assignment-response migration once:
+
+- **phpMyAdmin:** select `hub_pm_system` → **Import** → choose `database/migrations/2026_11_04_add_task_assignment_response.sql` → **Go**
+- **Command line:**
+  ```bash
+  mysql -u root hub_pm_system < database/migrations/2026_11_04_add_task_assignment_response.sql
+  ```
+
 ## Default Credentials
 
 | Role | Username | Password |
@@ -90,14 +102,21 @@ task-tracking-system/
 │   ├── functions.php           # Helper functions
 │   └── navbar.php              # Navigation bar
 ├── database/
+│   ├── migrations/             # Incremental schema changes
 │   └── schema.sql              # Database schema + sample data
 ├── dashboard.php               # Main dashboard
+├── edit_project.php            # Edit project
 ├── login.php                   # Login page
 ├── logout.php                  # Logout handler
 ├── notifications.php           # Notifications page
+├── profile.php                 # User profile & password change
+├── project_detail.php          # Project details, milestones & tasks
 ├── projects.php                # Projects management
 ├── reports.php                 # Reports & analytics
+├── settings.php                # User settings & system info
+├── task_detail.php             # Task details & comments
 ├── tasks.php                   # Tasks management
+├── users.php                   # User management (Administrator)
 ├── index.php                   # Entry point
 └── README.md                   # This file
 ```

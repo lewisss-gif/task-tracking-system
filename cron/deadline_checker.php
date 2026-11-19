@@ -10,6 +10,16 @@
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/functions.php';
 
+// Restrict access: this script must only run from the command line or localhost.
+// Without this guard anyone could trigger mass notifications via the browser.
+if (php_sapi_name() !== 'cli') {
+    $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '';
+    if (!in_array($remoteAddr, ['127.0.0.1', '::1'], true)) {
+        http_response_code(403);
+        exit('Forbidden: this script can only be run from the command line or localhost.');
+    }
+}
+
 $database = new Database();
 $db = $database->getConnection();
 
@@ -23,6 +33,7 @@ $query = "SELECT t.task_id, t.title, t.assigned_to, t.due_date,
           FROM tasks t 
           JOIN users u ON t.assigned_to = u.user_id 
           WHERE t.status != 'Completed' 
+          AND t.assignment_status != 'Rejected'
           AND t.due_date = DATE_ADD(CURDATE(), INTERVAL 1 DAY)";
 
 $stmt = $db->prepare($query);
@@ -60,6 +71,7 @@ $overdueQuery = "SELECT t.task_id, t.title, t.assigned_to, t.due_date,
                  JOIN users u ON t.assigned_to = u.user_id 
                  JOIN projects p ON t.project_id = p.project_id 
                  WHERE t.status NOT IN ('Completed', 'Blocked') 
+                 AND t.assignment_status != 'Rejected'
                  AND t.due_date < CURDATE()";
 
 $overdueStmt = $db->prepare($overdueQuery);

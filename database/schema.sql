@@ -82,6 +82,9 @@ CREATE TABLE tasks (
     title VARCHAR(200) NOT NULL,
     description TEXT,
     status ENUM('Pending', 'In Progress', 'Completed', 'Blocked') DEFAULT 'Pending',
+    assignment_status ENUM('Pending', 'Accepted', 'Rejected') NOT NULL DEFAULT 'Pending',
+    assignment_responded_at TIMESTAMP NULL,
+    rejection_reason TEXT NULL,
     priority ENUM('Low', 'Medium', 'High', 'Critical') DEFAULT 'Medium',
     assigned_to INT NULL,
     created_by INT NOT NULL,
@@ -163,13 +166,13 @@ INSERT INTO milestones (project_id, title, due_date, status) VALUES
 (2, 'Frontend Development', '2026-04-20', 'In Progress');
 
 -- Sample tasks
-INSERT INTO tasks (project_id, milestone_id, title, description, status, priority, assigned_to, created_by, due_date) VALUES
-(1, 1, 'Create Login Page', 'Design and implement login UI with validation', 'Completed', 'High', 3, 2, '2026-03-12'),
-(1, 1, 'User Authentication API', 'Implement JWT-based authentication', 'In Progress', 'Critical', 4, 2, '2026-03-18'),
-(1, 2, 'Dashboard Components', 'Build main dashboard widgets and charts', 'Pending', 'Medium', 5, 2, '2026-03-20'),
-(1, 2, 'API Integration', 'Connect frontend to backend APIs', 'Pending', 'High', 3, 2, '2026-03-25'),
-(2, 4, 'Homepage Wireframe', 'Design homepage layout in Figma', 'Completed', 'Medium', 5, 2, '2026-03-20'),
-(2, 5, 'Responsive Navigation', 'Build mobile-responsive navigation bar', 'In Progress', 'High', 4, 2, '2026-03-28');
+INSERT INTO tasks (project_id, milestone_id, title, description, status, assignment_status, priority, assigned_to, created_by, due_date) VALUES
+(1, 1, 'Create Login Page', 'Design and implement login UI with validation', 'Completed', 'Accepted', 'High', 3, 2, '2026-03-12'),
+(1, 1, 'User Authentication API', 'Implement JWT-based authentication', 'In Progress', 'Accepted', 'Critical', 4, 2, '2026-03-18'),
+(1, 2, 'Dashboard Components', 'Build main dashboard widgets and charts', 'Pending', 'Pending', 'Medium', 5, 2, '2026-03-20'),
+(1, 2, 'API Integration', 'Connect frontend to backend APIs', 'Pending', 'Pending', 'High', 3, 2, '2026-03-25'),
+(2, 4, 'Homepage Wireframe', 'Design homepage layout in Figma', 'Completed', 'Accepted', 'Medium', 5, 2, '2026-03-20'),
+(2, 5, 'Responsive Navigation', 'Build mobile-responsive navigation bar', 'In Progress', 'Accepted', 'High', 4, 2, '2026-03-28');
 
 -- Sample comments
 INSERT INTO comments (task_id, user_id, content) VALUES

@@ -17,18 +17,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
     
-    if (empty($username) || empty($password)) {
+    if (!verifyCsrfToken()) {
+        $error = 'Invalid or expired form submission. Please try again.';
+    } elseif (empty($username) || empty($password)) {
         $error = 'Please enter both username and password.';
     } else {
         $user = authenticate($username, $password);
-        
+
         if ($user) {
             loginUser($user);
-            
+
             // Redirect to intended page or dashboard
             $redirectUrl = $_SESSION['redirect_url'] ?? 'dashboard.php';
             unset($_SESSION['redirect_url']);
-            
+
+            // Prevent open redirects - only allow local paths
+            if (!str_starts_with($redirectUrl, '/') || str_starts_with($redirectUrl, '//')) {
+                $redirectUrl = 'dashboard.php';
+            }
+
             header("Location: " . $redirectUrl);
             exit();
         } else {
@@ -112,7 +119,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <i class="bi bi-lock"></i> Please log in to access the system.
                 </div>
             <?php endif; ?>
-            
+
+            <?php if (isset($_GET['error']) && $_GET['error'] === 'session_expired'): ?>
+                <div class="alert alert-warning">
+                    <i class="bi bi-clock-history"></i> Your session has expired. Please log in again.
+                </div>
+            <?php endif; ?>
+
+            <?php if (isset($_GET['logged_out'])): ?>
+                <div class="alert alert-success">
+                    <i class="bi bi-check-circle"></i> You have been logged out successfully.
+                </div>
+            <?php endif; ?>
+
             <?php if (isset($_GET['registered'])): ?>
                 <div class="alert alert-success">
                     <i class="bi bi-check-circle"></i> Registration successful! Please log in.
@@ -120,6 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <?php endif; ?>
             
             <form method="POST" action="">
+                <?php echo csrfField(); ?>
                 <div class="mb-3">
                     <label for="username" class="form-label">Username</label>
                     <div class="input-group">

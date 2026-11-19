@@ -13,59 +13,125 @@ $role = $_SESSION['role'];
 
 // Handle task creation
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    // All POST actions require a valid CSRF token
+    if (!verifyCsrfToken()) {
+        redirect('tasks.php', 'error', 'Invalid or expired form submission. Please try again.');
+    }
+
     if ($_POST['action'] === 'create' && hasAnyRole(['Administrator', 'Project Manager'])) {
-        $query = "INSERT INTO tasks (project_id, milestone_id, title, description, priority, assigned_to, created_by, due_date) 
-                  VALUES (:project_id, :milestone_id, :title, :description, :priority, :assigned_to, :created_by, :due_date)";
-        $stmt = $db->prepare($query);
-        $stmt->execute([
-            ':project_id' => $_POST['project_id'],
-            ':milestone_id' => !empty($_POST['milestone_id']) ? $_POST['milestone_id'] : null,
-            ':title' => $_POST['title'],
-            ':description' => $_POST['description'],
-            ':priority' => $_POST['priority'],
-            ':assigned_to' => !empty($_POST['assigned_to']) ? $_POST['assigned_to'] : null,
-            ':created_by' => $user_id,
-            ':due_date' => $_POST['due_date']
-        ]);
-        
+        $title = trim($_POST['title'] ?? '');
+        $projectId = (int)($_POST['project_id'] ?? 0);
+        $milestoneId = !empty($_POST['milestone_id']) ? (int)$_POST['milestone_id'] : null;
+        $assignedTo = !empty($_POST['assigned_to']) ? (int)$_POST['assigned_to'] : null;
+        $priority = $_POST['priority'] ?? '';
+        $dueDate = $_POST['due_date'] ?? '';
+        $description = trim($_POST['description'] ?? '');
+
+        if (empty($title) || !$projectId || empty($dueDate)) {
+            redirect('tasks.php', 'error', 'Please fill in all required fields.');
+        }
+
+        if (!in_array($priority, [PRIORITY_LOW, PRIORITY_MEDIUM, PRIORITY_HIGH, PRIORITY_CRITICAL], true)) {
+            redirect('tasks.php', 'error', 'Invalid priority selected.');
+        }
+
+        // Verify the project exists
+        $projectCheck = $db->prepare("SELECT project_id FROM projects WHERE project_id = :project_id");
+        $projectCheck->execute([':project_id' => $projectId]);
+        if (!$projectCheck->fetch()) {
+            redirect('tasks.php', 'error', 'Invalid project selected.');
+        }
+
+        // Verify the assignee exists
+        if ($assignedTo) {
+            $userCheck = $db->prepare("SELECT user_id FROM users WHERE user_id = :user_id AND is_active = 1");
+            $userCheck->execute([':user_id' => $assignedTo]);
+            if (!$userCheck->fetch()) {
+                redirect('tasks.php', 'error', 'Invalid assignee selected.');
+            }
+        }
+
+        try {
+            $query = "INSERT INTO tasks (project_id, milestone_id, title, description, priority, assigned_to, created_by, due_date)
+                      VALUES (:project_id, :milestone_id, :title, :description, :priority, :assigned_to, :created_by, :due_date)";
+            $stmt = $db->prepare($query);
+            $stmt->execute([
+                ':project_id' => $projectId,
+                ':milestone_id' => $milestoneId,
+                ':title' => $title,
+                ':description' => $description,
+                ':priority' => $priority,
+                ':assigned_to' => $assignedTo,
+                ':created_by' => $user_id,
+                ':due_date' => $dueDate
+            ]);
+        } catch (PDOException $e) {
+            error_log("Task creation error: " . $e->getMessage());
+            redirect('tasks.php', 'error', 'Failed to create task. Please try again.');
+        }
+
         $taskId = $db->lastInsertId();
-        
+
         // Send notification to assigned user
-        if (!empty($_POST['assigned_to'])) {
+        if ($assignedTo) {
             createNotification(
-                $_POST['assigned_to'],
-                "You have been assigned a new task: " . $_POST['title'],
+                $assignedTo,
+                "You have been assigned a new task: " . $title,
                 'Task Assigned',
                 $taskId,
                 'task'
             );
         }
-        
-        logActivity($user_id, 'created_task', 'task', $taskId, null, $_POST['title']);
+
+        logActivity($user_id, 'created_task', 'task', $taskId, null, $title);
         redirect('tasks.php', 'success', 'Task created successfully!');
     }
-    
+
     if ($_POST['action'] === 'update_status') {
+        $taskId = (int)($_POST['task_id'] ?? 0);
+        $newStatus = $_POST['status'] ?? '';
+        $validStatuses = [TASK_STATUS_PENDING, TASK_STATUS_IN_PROGRESS, TASK_STATUS_COMPLETED, TASK_STATUS_BLOCKED];
+
+        if (!in_array($newStatus, $validStatuses, true)) {
+            redirect('tasks.php', 'error', 'Invalid status selected.');
+        }
+
         // Verify user owns the task or is admin/manager
         $checkQuery = "SELECT assigned_to, created_by FROM tasks WHERE task_id = :task_id";
         $checkStmt = $db->prepare($checkQuery);
-        $checkStmt->execute([':task_id' => $_POST['task_id']]);
+        $checkStmt->execute([':task_id' => $taskId]);
         $task = $checkStmt->fetch();
-        
-        if ($task && ($task['assigned_to'] == $user_id || hasAnyRole(['Administrator', 'Project Manager']))) {
-            $oldStatus = $_POST['old_status'] ?? '';
-            
-            $query = "UPDATE tasks SET status = :status, completed_at = :completed_at WHERE task_id = :task_id";
-            $stmt = $db->prepare($query);
-            $stmt->execute([
-                ':status' => $_POST['status'],
-                ':completed_at' => $_POST['status'] === 'Completed' ? date('Y-m-d H:i:s') : null,
-                ':task_id' => $_POST['task_id']
-            ]);
-            
-            logActivity($user_id, 'updated_status', 'task', $_POST['task_id'], $oldStatus, $_POST['status']);
-            redirect('tasks.php', 'success', 'Task status updated!');
+
+        if (!$task) {
+            redirect('tasks.php', 'error', 'Task not found.');
         }
+
+        if ($task['assigned_to'] != $user_id && !hasAnyRole(['Administrator', 'Project Manager'])) {
+            redirect('tasks.php', 'error', 'You are not authorized to update this task.');
+        }
+
+        $oldStatus = $_POST['old_status'] ?? '';
+
+        $query = "UPDATE tasks SET status = :status, completed_at = :completed_at WHERE task_id = :task_id";
+        $stmt = $db->prepare($query);
+        $stmt->execute([
+            ':status' => $newStatus,
+            ':completed_at' => $newStatus === 'Completed' ? date('Y-m-d H:i:s') : null,
+            ':task_id' => $taskId
+        ]);
+
+        logActivity($user_id, 'updated_status', 'task', $taskId, $oldStatus, $newStatus);
+        redirect('tasks.php', 'success', 'Task status updated!');
+    }
+
+    // Accept, flag as pending, or reject an assignment
+    if ($_POST['action'] === 'respond') {
+        $taskId = (int)($_POST['task_id'] ?? 0);
+        $response = $_POST['response'] ?? '';
+        $reason = $_POST['reason'] ?? '';
+
+        $result = respondToTaskAssignment($taskId, $user_id, $response, $reason);
+        redirect('tasks.php', $result['success'] ? 'success' : 'error', $result['message']);
     }
 }
 
@@ -109,6 +175,9 @@ if ($role === 'Team Member') {
 $stmt->execute();
 $tasks = $stmt->fetchAll();
 
+$workload = getUserWorkload($user_id);
+$workloadMeta = getWorkloadMeta($workload['active_tasks']);
+
 // Get projects and users for dropdowns
 $projectsQuery = "SELECT project_id, title FROM projects WHERE status != 'Cancelled' ORDER BY title";
 $projectsStmt = $db->prepare($projectsQuery);
@@ -125,6 +194,7 @@ $users = getUsersByRole();
     <title>Tasks - <?php echo APP_NAME; ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="assets/css/style.css" rel="stylesheet">
 </head>
 <body>
     <?php include 'includes/navbar.php'; ?>
@@ -140,6 +210,24 @@ $users = getUsersByRole();
         </div>
         
         <?php echo displayFlashMessages(); ?>
+
+        <?php if ($role === 'Team Member' || $workload['active_tasks'] > 0): ?>
+        <div class="alert alert-<?php echo $workloadMeta['class']; ?> d-flex align-items-center gap-3">
+            <i class="bi bi-activity fs-3"></i>
+            <div class="flex-grow-1">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <strong>Your current workload: <?php echo $workload['active_tasks']; ?> active task<?php echo $workload['active_tasks'] === 1 ? '' : 's'; ?></strong>
+                    <span class="badge text-bg-<?php echo $workloadMeta['class']; ?>"><?php echo $workloadMeta['label']; ?></span>
+                </div>
+                <small>
+                    <?php echo $workload['in_progress']; ?> in progress &middot;
+                    <?php echo $workload['pending']; ?> pending &middot;
+                    <?php echo $workload['blocked']; ?> blocked &middot;
+                    <?php echo $workload['overdue']; ?> overdue
+                </small>
+            </div>
+        </div>
+        <?php endif; ?>
         
         <!-- Filter -->
         <div class="card mb-4">
@@ -148,7 +236,7 @@ $users = getUsersByRole();
                     <div class="col-md-3">
                         <input type="text" class="form-control" id="searchInput" placeholder="Search tasks...">
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <select class="form-select" id="statusFilter">
                             <option value="">All Statuses</option>
                             <option value="Pending">Pending</option>
@@ -157,13 +245,21 @@ $users = getUsersByRole();
                             <option value="Blocked">Blocked</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <select class="form-select" id="priorityFilter">
                             <option value="">All Priorities</option>
                             <option value="Critical">Critical</option>
                             <option value="High">High</option>
                             <option value="Medium">Medium</option>
                             <option value="Low">Low</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="responseFilter">
+                            <option value="">All Responses</option>
+                            <option value="Pending">Awaiting Response</option>
+                            <option value="Accepted">Accepted</option>
+                            <option value="Rejected">Rejected</option>
                         </select>
                     </div>
                     <div class="col-md-3">
@@ -186,6 +282,7 @@ $users = getUsersByRole();
                             <th>Assigned To</th>
                             <th>Priority</th>
                             <th>Status</th>
+                            <th>Response</th>
                             <th>Due Date</th>
                             <th>Actions</th>
                         </tr>
@@ -193,18 +290,20 @@ $users = getUsersByRole();
                     <tbody>
                         <?php if (empty($tasks)): ?>
                         <tr>
-                            <td colspan="7" class="text-center py-4 text-muted">
+                            <td colspan="8" class="text-center py-4 text-muted">
                                 <i class="bi bi-inbox fs-1 d-block mb-2"></i>
                                 No tasks found
                             </td>
                         </tr>
                         <?php else: ?>
                             <?php foreach ($tasks as $task): 
-                                $isOverdue = $task['due_date'] && strtotime($task['due_date']) < time() && $task['status'] !== 'Completed';
+                                $isOverdue = $task['due_date'] && strtotime($task['due_date']) < strtotime('today') && $task['status'] !== 'Completed';
+                                $assignmentStatus = $task['assignment_status'] ?? ASSIGNMENT_PENDING;
                             ?>
                             <tr class="task-row" 
                                 data-status="<?php echo $task['status']; ?>"
-                                data-priority="<?php echo $task['priority']; ?>">
+                                data-priority="<?php echo $task['priority']; ?>"
+                                data-assignment="<?php echo escape($assignmentStatus); ?>">
                                 <td>
                                     <div>
                                         <strong><?php echo escape($task['title']); ?></strong>
@@ -219,6 +318,7 @@ $users = getUsersByRole();
                                 <td>
                                     <?php if ($task['assigned_to'] == $user_id || hasAnyRole(['Administrator', 'Project Manager'])): ?>
                                     <form method="POST" class="d-inline">
+                                        <?php echo csrfField(); ?>
                                         <input type="hidden" name="action" value="update_status">
                                         <input type="hidden" name="task_id" value="<?php echo $task['task_id']; ?>">
                                         <input type="hidden" name="old_status" value="<?php echo $task['status']; ?>">
@@ -234,6 +334,14 @@ $users = getUsersByRole();
                                     <?php echo getStatusBadge($task['status']); ?>
                                     <?php endif; ?>
                                 </td>
+                                <td>
+                                    <?php echo getAssignmentBadge($assignmentStatus); ?>
+                                    <?php if ($assignmentStatus === ASSIGNMENT_REJECTED && !empty($task['rejection_reason'])): ?>
+                                    <br><small class="text-muted" title="<?php echo escape($task['rejection_reason']); ?>">
+                                        <i class="bi bi-chat-left-text"></i> Reason provided
+                                    </small>
+                                    <?php endif; ?>
+                                </td>
                                 <td class="<?php echo $isOverdue ? 'text-danger fw-bold' : ''; ?>">
                                     <?php echo formatDate($task['due_date']); ?>
                                     <?php if ($isOverdue): ?>
@@ -241,9 +349,48 @@ $users = getUsersByRole();
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <a href="task_detail.php?id=<?php echo $task['task_id']; ?>" class="btn btn-sm btn-outline-primary">
-                                        <i class="bi bi-eye"></i>
-                                    </a>
+                                    <div class="d-flex flex-wrap align-items-center gap-1">
+                                        <a href="task_detail.php?id=<?php echo $task['task_id']; ?>" class="btn btn-sm btn-outline-primary" title="View task">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+
+                                        <?php if ($task['assigned_to'] == $user_id && $task['status'] !== TASK_STATUS_COMPLETED): ?>
+                                            <?php if ($assignmentStatus !== ASSIGNMENT_ACCEPTED): ?>
+                                            <form method="POST" class="accept-task-form">
+                                                <?php echo csrfField(); ?>
+                                                <input type="hidden" name="action" value="respond">
+                                                <input type="hidden" name="task_id" value="<?php echo $task['task_id']; ?>">
+                                                <input type="hidden" name="response" value="<?php echo ASSIGNMENT_ACCEPTED; ?>">
+                                                <button type="submit" class="btn btn-sm btn-success" title="Accept task">
+                                                    <i class="bi bi-check-lg"></i>
+                                                </button>
+                                            </form>
+                                            <?php endif; ?>
+
+                                            <?php if ($assignmentStatus !== ASSIGNMENT_PENDING): ?>
+                                            <form method="POST">
+                                                <?php echo csrfField(); ?>
+                                                <input type="hidden" name="action" value="respond">
+                                                <input type="hidden" name="task_id" value="<?php echo $task['task_id']; ?>">
+                                                <input type="hidden" name="response" value="<?php echo ASSIGNMENT_PENDING; ?>">
+                                                <button type="submit" class="btn btn-sm btn-warning" title="Flag as pending">
+                                                    <i class="bi bi-clock"></i>
+                                                </button>
+                                            </form>
+                                            <?php endif; ?>
+
+                                            <?php if ($assignmentStatus !== ASSIGNMENT_REJECTED): ?>
+                                            <button type="button" class="btn btn-sm btn-danger reject-task-btn"
+                                                    title="Reject task"
+                                                    data-bs-toggle="modal"
+                                                    data-bs-target="#rejectTaskModal"
+                                                    data-task-id="<?php echo $task['task_id']; ?>"
+                                                    data-task-title="<?php echo escape($task['title']); ?>">
+                                                <i class="bi bi-x-lg"></i>
+                                            </button>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -259,6 +406,7 @@ $users = getUsersByRole();
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <form method="POST">
+                    <?php echo csrfField(); ?>
                     <input type="hidden" name="action" value="create">
                     <div class="modal-header">
                         <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Create New Task</h5>
@@ -330,24 +478,61 @@ $users = getUsersByRole();
         </div>
     </div>
     
+    <!-- Reject Task Modal -->
+    <div class="modal fade" id="rejectTaskModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="POST">
+                    <?php echo csrfField(); ?>
+                    <input type="hidden" name="action" value="respond">
+                    <input type="hidden" name="response" value="<?php echo ASSIGNMENT_REJECTED; ?>">
+                    <input type="hidden" name="task_id" id="rejectTaskId">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-x-circle"></i> Reject Task</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="mb-3">
+                            You are about to reject <strong id="rejectTaskTitle"></strong>.
+                            The task will stay assigned to you and your project manager will be notified so it can be reviewed or reassigned.
+                        </p>
+                        <label class="form-label">Reason (optional)</label>
+                        <textarea class="form-control" name="reason" id="rejectReason" rows="3" maxlength="500"
+                                  placeholder="e.g. I do not have capacity for this task right now"></textarea>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger">Reject Task</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        const currentWorkload = <?php echo (int)$workload['active_tasks']; ?>;
+        const heavyWorkload = currentWorkload >= <?php echo (int)WORKLOAD_HEAVY_THRESHOLD; ?>;
+
         // Filter functionality
         function filterTasks() {
             const search = document.getElementById('searchInput').value.toLowerCase();
             const status = document.getElementById('statusFilter').value;
             const priority = document.getElementById('priorityFilter').value;
+            const response = document.getElementById('responseFilter').value;
             
             document.querySelectorAll('.task-row').forEach(row => {
                 const text = row.textContent.toLowerCase();
                 const rowStatus = row.dataset.status;
                 const rowPriority = row.dataset.priority;
+                const rowAssignment = row.dataset.assignment;
                 
                 const matchesSearch = !search || text.includes(search);
                 const matchesStatus = !status || rowStatus === status;
                 const matchesPriority = !priority || rowPriority === priority;
+                const matchesResponse = !response || rowAssignment === response;
                 
-                row.style.display = (matchesSearch && matchesStatus && matchesPriority) ? '' : 'none';
+                row.style.display = (matchesSearch && matchesStatus && matchesPriority && matchesResponse) ? '' : 'none';
             });
         }
         
@@ -355,12 +540,34 @@ $users = getUsersByRole();
             document.getElementById('searchInput').value = '';
             document.getElementById('statusFilter').value = '';
             document.getElementById('priorityFilter').value = '';
+            document.getElementById('responseFilter').value = '';
             filterTasks();
         }
         
         document.getElementById('searchInput').addEventListener('keyup', filterTasks);
         document.getElementById('statusFilter').addEventListener('change', filterTasks);
         document.getElementById('priorityFilter').addEventListener('change', filterTasks);
+        document.getElementById('responseFilter').addEventListener('change', filterTasks);
+
+        // Warn before accepting more work when the current workload is heavy.
+        document.querySelectorAll('.accept-task-form').forEach(form => {
+            form.addEventListener('submit', function(event) {
+                if (heavyWorkload && !confirm('You already have ' + currentWorkload + ' active tasks. Accepting this task will add to your workload. Continue?')) {
+                    event.preventDefault();
+                }
+            });
+        });
+
+        // Populate the reject modal with the selected task.
+        const rejectTaskModal = document.getElementById('rejectTaskModal');
+        if (rejectTaskModal) {
+            rejectTaskModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                document.getElementById('rejectTaskId').value = button.getAttribute('data-task-id');
+                document.getElementById('rejectTaskTitle').textContent = button.getAttribute('data-task-title');
+                document.getElementById('rejectReason').value = '';
+            });
+        }
         
         // Load milestones when project is selected
         document.getElementById('projectSelect')?.addEventListener('change', function() {

@@ -10,15 +10,19 @@ $database = new Database();
 $db = $database->getConnection();
 $user_id = $_SESSION['user_id'];
 
-// Mark as read
-if (isset($_GET['mark_read'])) {
-    $query = "UPDATE notifications SET is_read = 1 WHERE notification_id = :id AND user_id = :user_id";
-    $stmt = $db->prepare($query);
-    $stmt->execute([':id' => $_GET['mark_read'], ':user_id' => $user_id]);
-    redirect('notifications.php');
-}
+// Mark as read (token-protected since these change state via GET)
+if (isset($_GET['mark_read']) || isset($_GET['mark_all_read'])) {
+    if (!verifyCsrfToken($_GET['token'] ?? '')) {
+        redirect('notifications.php', 'error', 'Invalid request. Please try again.');
+    }
 
-if (isset($_GET['mark_all_read'])) {
+    if (isset($_GET['mark_read'])) {
+        $query = "UPDATE notifications SET is_read = 1 WHERE notification_id = :id AND user_id = :user_id";
+        $stmt = $db->prepare($query);
+        $stmt->execute([':id' => (int)$_GET['mark_read'], ':user_id' => $user_id]);
+        redirect('notifications.php');
+    }
+
     $query = "UPDATE notifications SET is_read = 1 WHERE user_id = :user_id";
     $stmt = $db->prepare($query);
     $stmt->execute([':user_id' => $user_id]);
@@ -40,15 +44,16 @@ $notifications = $stmt->fetchAll();
     <title>Notifications - <?php echo APP_NAME; ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="assets/css/style.css" rel="stylesheet">
 </head>
 <body>
     <?php include 'includes/navbar.php'; ?>
-    
+
     <div class="container py-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2><i class="bi bi-bell"></i> Notifications</h2>
             <?php if (!empty($notifications)): ?>
-            <a href="?mark_all_read=1" class="btn btn-outline-primary">
+            <a href="?mark_all_read=1&token=<?php echo csrfToken(); ?>" class="btn btn-outline-primary">
                 <i class="bi bi-check-all"></i> Mark All as Read
             </a>
             <?php endif; ?>
@@ -92,7 +97,7 @@ $notifications = $stmt->fetchAll();
                             </div>
                         </div>
                         <?php if (!$notif['is_read']): ?>
-                        <a href="?mark_read=<?php echo $notif['notification_id']; ?>" class="btn btn-sm btn-outline-secondary">
+                        <a href="?mark_read=<?php echo $notif['notification_id']; ?>&token=<?php echo csrfToken(); ?>" class="btn btn-sm btn-outline-secondary">
                             <i class="bi bi-check"></i>
                         </a>
                         <?php endif; ?>
