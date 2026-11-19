@@ -1,0 +1,7 @@
+# Allow common extensionless URLs (e.g. /login instead of /login.php)
+RewriteEngine On
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}.php -f
+RewriteRule ^([^/]+)/?$ /$1.php [R=301,L]
