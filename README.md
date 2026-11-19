@@ -71,17 +71,11 @@ If you already imported an older `schema.sql`, apply the assignment-response mig
   mysql -u root hub_pm_system < database/migrations/2026_11_04_add_task_assignment_response.sql
   ```
 
-## Default Credentials
+## Local Development Credentials
 
-| Role | Username | Password |
-|------|----------|----------|
-| Administrator | `admin` | `admin123` |
-| Project Manager | `john.manager` | `password123` |
-| Team Member | `sarah.dev` | `password123` |
-| Team Member | `mike.dev` | `password123` |
-| Team Member | `lisa.dev` | `password123` |
+The seed data in `database/schema.sql` uses development-only default passwords (`admin123` for `admin` and `password123` for the sample users). These are intended for local testing only.
 
-> **Important:** Change the default admin password after first login.
+> **Important:** Change all default passwords before exposing the application publicly. On the live InfinityFree deployment these passwords were replaced with strong random values; see the deployment credentials file.
 
 ## Project Structure
 

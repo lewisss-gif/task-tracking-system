@@ -166,7 +166,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <hr class="my-4">
             
             <div class="text-center text-muted">
-                <small>Default Admin: <strong>admin</strong> / <strong>admin123</strong></small>
             </div>
         </div>
     </div>
